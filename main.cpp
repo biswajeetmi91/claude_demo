@@ -1,53 +1,59 @@
 #include <iostream>
+#include <string>
 #include <thread>
 #include <chrono>
 #include "shadow_service.hpp"
 
-// Agent that sends a greeting and remembers it
-class GreeterAgent : public Agent {
+// Forwards every received message to Agent B
+class AgentA : public Agent {
 public:
     using Agent::Agent;
 
     void onStart() override {
-        remember("greeting", "hello");
-        send("responder", "greet", recall("greeting").value());
+        std::cout << "[Agent A] online — waiting for your messages\n";
     }
 
     void handleMessage(const Message& msg) override {
-        std::cout << "[" << name << "] received '" << msg.payload
-                  << "' from " << msg.from << "\n";
+        if (msg.topic == "user_input") {
+            std::cout << "[Agent A] sending to B: " << msg.payload << "\n";
+            send("B", "msg", msg.payload);
+        }
     }
 };
 
-// Agent that responds to greetings
-class ResponderAgent : public Agent {
+// Prints everything it receives
+class AgentB : public Agent {
 public:
     using Agent::Agent;
 
+    void onStart() override {
+        std::cout << "[Agent B] online — ready to receive\n";
+    }
+
     void handleMessage(const Message& msg) override {
-        if (msg.topic == "greet") {
-            std::cout << "[" << name << "] got greeting: '" << msg.payload << "'\n";
-            remember("last_greeter", msg.from);
-            send(msg.from, "reply", "world");
-        }
+        std::cout << "[Agent B] received from " << msg.from << ": " << msg.payload << "\n";
     }
 };
 
 int main() {
     ShadowService service;
 
-    service.registerAgent(std::make_unique<GreeterAgent>(
-        "greeter", "Greeter", service.channel(), service.memory()));
-    service.registerAgent(std::make_unique<ResponderAgent>(
-        "responder", "Responder", service.channel(), service.memory()));
+    service.registerAgent(std::make_unique<AgentA>(
+        "A", "Agent A", service.channel(), service.memory()));
+    service.registerAgent(std::make_unique<AgentB>(
+        "B", "Agent B", service.channel(), service.memory()));
 
     service.startAll();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    service.stopAll();
 
-    // Show memory state
-    auto lastGreeter = service.memory().get("responder", "last_greeter");
-    std::cout << "[Memory] responder.last_greeter = "
-              << lastGreeter.value_or("(none)") << "\n";
+    std::cout << "Type a message and press Enter to send (Ctrl+D to quit):\n\n";
+
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        if (line.empty()) continue;
+        service.channel().publish({"terminal", "A", "user_input", line});
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    service.stopAll();
     return 0;
 }
