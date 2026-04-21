@@ -3,17 +3,16 @@
 #include <unordered_map>
 #include <mutex>
 #include <condition_variable>
-#include <string>
-#include "message.hpp"
+#include "interfaces.hpp"
 
-class Channel {
+class Channel : public IChannel {
 public:
-    void subscribe(const std::string& agentId) {
+    void subscribe(const std::string& agentId) override {
         std::lock_guard<std::mutex> lock(mutex_);
         queues_[agentId];
     }
 
-    void publish(const Message& msg) {
+    void publish(const Message& msg) override {
         std::lock_guard<std::mutex> lock(mutex_);
         if (msg.to.empty()) {
             for (auto& [id, q] : queues_)
@@ -25,8 +24,7 @@ public:
         cv_.notify_all();
     }
 
-    // Blocks until a message is available for agentId
-    Message receive(const std::string& agentId) {
+    Message receive(const std::string& agentId) override {
         std::unique_lock<std::mutex> lock(mutex_);
         cv_.wait(lock, [&] { return !queues_[agentId].empty(); });
         Message msg = queues_[agentId].front();
@@ -34,7 +32,7 @@ public:
         return msg;
     }
 
-    bool tryReceive(const std::string& agentId, Message& out) {
+    bool tryReceive(const std::string& agentId, Message& out) override {
         std::lock_guard<std::mutex> lock(mutex_);
         auto& q = queues_[agentId];
         if (q.empty()) return false;

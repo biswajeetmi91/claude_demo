@@ -1,53 +1,71 @@
 #include <iostream>
+#include <string>
 #include <thread>
 #include <chrono>
 #include "shadow_service.hpp"
+#include "persona_agent.hpp"
 
-// Agent that sends a greeting and remembers it
-class GreeterAgent : public Agent {
-public:
-    using Agent::Agent;
+static std::unique_ptr<PersonaAgent> makePersona(
+    const std::string& id,
+    const std::string& displayName,
+    const std::string& role,
+    const std::string& greeting,
+    std::vector<std::string> traits,
+    ShadowService& service)
+{
+    auto agent = std::make_unique<PersonaAgent>(
+        id, displayName, service.channel(), service.memory(), service.rdf());
 
-    void onStart() override {
-        remember("greeting", "hello");
-        send("responder", "greet", recall("greeting").value());
-    }
+    agent->defineTrait("name",     displayName);
+    agent->defineTrait("role",     role);
+    agent->defineTrait("greeting", greeting);
+    for (auto& t : traits) agent->defineTrait("trait", t);
 
-    void handleMessage(const Message& msg) override {
-        std::cout << "[" << name << "] received '" << msg.payload
-                  << "' from " << msg.from << "\n";
-    }
-};
+    // OCP: register topic handlers without modifying PersonaAgent
+    agent->addTopicHandler("user_input", [a = agent.get()](const Message& msg) {
+        a->printReceived(msg);
+        a->replyInPersona(msg);
+    });
+    agent->addTopicHandler("chat", [a = agent.get()](const Message& msg) {
+        a->printReceived(msg);
+    });
 
-// Agent that responds to greetings
-class ResponderAgent : public Agent {
-public:
-    using Agent::Agent;
-
-    void handleMessage(const Message& msg) override {
-        if (msg.topic == "greet") {
-            std::cout << "[" << name << "] got greeting: '" << msg.payload << "'\n";
-            remember("last_greeter", msg.from);
-            send(msg.from, "reply", "world");
-        }
-    }
-};
+    return agent;
+}
 
 int main() {
     ShadowService service;
 
-    service.registerAgent(std::make_unique<GreeterAgent>(
-        "greeter", "Greeter", service.channel(), service.memory()));
-    service.registerAgent(std::make_unique<ResponderAgent>(
-        "responder", "Responder", service.channel(), service.memory()));
+    auto alice = makePersona("alice", "Alice", "mentor",
+        "Hello! I'm Alice, your mentor. Ready to guide you.",
+        {"patient", "encouraging"}, service);
+
+    auto rex = makePersona("rex", "Rex", "critic",
+        "Rex here. I'll tell you exactly what I think.",
+        {"blunt", "analytical"}, service);
+
+    service.registerAgent(std::move(alice));
+    service.registerAgent(std::move(rex));
 
     service.startAll();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    service.stopAll();
 
-    // Show memory state
-    auto lastGreeter = service.memory().get("responder", "last_greeter");
-    std::cout << "[Memory] responder.last_greeter = "
-              << lastGreeter.value_or("(none)") << "\n";
+    std::cout << "\nType:  <agent_id> <message>  to send a message.\n";
+    std::cout << "       e.g.  alice Hello Rex!\n";
+    std::cout << "       e.g.  rex   Your feedback is harsh.\n";
+    std::cout << "Press Ctrl+D to quit.\n\n";
+
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        if (line.empty()) continue;
+        auto space = line.find(' ');
+        if (space == std::string::npos) {
+            std::cout << "Usage: <agent_id> <message>\n";
+            continue;
+        }
+        service.channel().publish({"terminal", line.substr(0, space), "user_input", line.substr(space + 1)});
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    service.stopAll();
     return 0;
 }

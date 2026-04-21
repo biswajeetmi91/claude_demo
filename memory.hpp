@@ -1,17 +1,16 @@
 #pragma once
 #include <unordered_map>
-#include <string>
 #include <mutex>
-#include <optional>
+#include "interfaces.hpp"
 
-class MemoryManager {
+class MemoryManager : public IMemoryStore {
 public:
-    void set(const std::string& agentId, const std::string& key, const std::string& value) {
+    void set(const std::string& agentId, const std::string& key, const std::string& value) override {
         std::lock_guard<std::mutex> lock(mutex_);
         store_[agentId][key] = value;
     }
 
-    std::optional<std::string> get(const std::string& agentId, const std::string& key) {
+    std::optional<std::string> get(const std::string& agentId, const std::string& key) override {
         std::lock_guard<std::mutex> lock(mutex_);
         auto agentIt = store_.find(agentId);
         if (agentIt == store_.end()) return std::nullopt;
@@ -20,7 +19,7 @@ public:
         return keyIt->second;
     }
 
-    void clear(const std::string& agentId) {
+    void clear(const std::string& agentId) override {
         std::lock_guard<std::mutex> lock(mutex_);
         store_.erase(agentId);
     }
