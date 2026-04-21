@@ -3,54 +3,66 @@
 #include <thread>
 #include <chrono>
 #include "shadow_service.hpp"
+#include "persona_agent.hpp"
 
-// Forwards every received message to Agent B
-class AgentA : public Agent {
-public:
-    using Agent::Agent;
+static std::unique_ptr<PersonaAgent> makePersona(
+    const std::string& id,
+    const std::string& displayName,
+    const std::string& role,
+    const std::string& greeting,
+    std::vector<std::string> traits,
+    ShadowService& service)
+{
+    auto agent = std::make_unique<PersonaAgent>(
+        id, displayName, service.channel(), service.memory(), service.rdf());
 
-    void onStart() override {
-        std::cout << "[Agent A] online — waiting for your messages\n";
-    }
+    agent->defineTrait("name",     displayName);
+    agent->defineTrait("role",     role);
+    agent->defineTrait("greeting", greeting);
+    for (auto& t : traits) agent->defineTrait("trait", t);
 
-    void handleMessage(const Message& msg) override {
-        if (msg.topic == "user_input") {
-            std::cout << "[Agent A] sending to B: " << msg.payload << "\n";
-            send("B", "msg", msg.payload);
-        }
-    }
-};
+    // OCP: register topic handlers without modifying PersonaAgent
+    agent->addTopicHandler("user_input", [a = agent.get()](const Message& msg) {
+        a->printReceived(msg);
+        a->replyInPersona(msg);
+    });
+    agent->addTopicHandler("chat", [a = agent.get()](const Message& msg) {
+        a->printReceived(msg);
+    });
 
-// Prints everything it receives
-class AgentB : public Agent {
-public:
-    using Agent::Agent;
-
-    void onStart() override {
-        std::cout << "[Agent B] online — ready to receive\n";
-    }
-
-    void handleMessage(const Message& msg) override {
-        std::cout << "[Agent B] received from " << msg.from << ": " << msg.payload << "\n";
-    }
-};
+    return agent;
+}
 
 int main() {
     ShadowService service;
 
-    service.registerAgent(std::make_unique<AgentA>(
-        "A", "Agent A", service.channel(), service.memory()));
-    service.registerAgent(std::make_unique<AgentB>(
-        "B", "Agent B", service.channel(), service.memory()));
+    auto alice = makePersona("alice", "Alice", "mentor",
+        "Hello! I'm Alice, your mentor. Ready to guide you.",
+        {"patient", "encouraging"}, service);
+
+    auto rex = makePersona("rex", "Rex", "critic",
+        "Rex here. I'll tell you exactly what I think.",
+        {"blunt", "analytical"}, service);
+
+    service.registerAgent(std::move(alice));
+    service.registerAgent(std::move(rex));
 
     service.startAll();
 
-    std::cout << "Type a message and press Enter to send (Ctrl+D to quit):\n\n";
+    std::cout << "\nType:  <agent_id> <message>  to send a message.\n";
+    std::cout << "       e.g.  alice Hello Rex!\n";
+    std::cout << "       e.g.  rex   Your feedback is harsh.\n";
+    std::cout << "Press Ctrl+D to quit.\n\n";
 
     std::string line;
     while (std::getline(std::cin, line)) {
         if (line.empty()) continue;
-        service.channel().publish({"terminal", "A", "user_input", line});
+        auto space = line.find(' ');
+        if (space == std::string::npos) {
+            std::cout << "Usage: <agent_id> <message>\n";
+            continue;
+        }
+        service.channel().publish({"terminal", line.substr(0, space), "user_input", line.substr(space + 1)});
     }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
